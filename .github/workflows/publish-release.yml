@@ -1,0 +1,64 @@
+name: Publish plugin release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Numeric version matching manifest.json"
+        required: true
+        type: string
+        default: "1.0.1"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate and build plugin ZIP
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
+          MANIFEST_ID="$(node -p "require('./manifest.json').id")"
+          if [[ "$MANIFEST_ID" != "trash-bin" ]]; then
+            echo "Unexpected plugin id: $MANIFEST_ID" >&2
+            exit 1
+          fi
+          if [[ "$VERSION" != "$MANIFEST_VERSION" ]]; then
+            echo "Requested version $VERSION does not match manifest version $MANIFEST_VERSION" >&2
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "Version must be numeric, for example 1.0.1" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          zip -X -9 -j dist/plugin.zip manifest.json plugin.js index.html icon.svg
+          unzip -t dist/plugin.zip
+          SHA="$(sha256sum dist/plugin.zip | awk '{print $1}')"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Trash Bin v$VERSION"
+            echo
+            echo "- Plugin ID: `$MANIFEST_ID`"
+            echo "- ZIP SHA-256: `$SHA`"
+            echo "- Asset name: `plugin.zip`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release and upload plugin ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v${VERSION}" dist/plugin.zip \
+            --title "Trash Bin v${VERSION}" \
+            --target main \
+            --notes "Trash Bin plugin for Super Productivity. This is a best-effort deleted-task recovery archive: task restoration creates a new task and cannot guarantee recovery of recurrence settings, timer history, original IDs, or all relationships. Projects, tags and saved filters are not fully recoverable through the documented public plugin API. Back up your data and test with sample data first."
