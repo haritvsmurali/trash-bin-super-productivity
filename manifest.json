@@ -1,0 +1,25 @@
+{
+  "id": "trash-bin",
+  "name": "Trash Bin",
+  "version": "1.0.1",
+  "manifestVersion": 1,
+  "minSupVersion": "14.0.0",
+  "author": "Hariharan",
+  "description": "A best-effort recovery archive for deleted tasks, with restore and archive cleanup actions.",
+  "iFrame": true,
+  "sidePanel": true,
+  "icon": "icon.svg",
+  "hooks": ["taskCreated", "taskUpdate", "taskDelete"],
+  "permissions": [
+    "addTask",
+    "getAllProjects",
+    "getAllTags",
+    "getArchivedTasks",
+    "getTasks",
+    "loadSyncedData",
+    "openDialog",
+    "persistDataSynced",
+    "showSnack",
+    "updateTask"
+  ]
+}
