@@ -1,11 +1,19 @@
 name: Publish plugin release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "manifest.json"
+      - "plugin.js"
+      - "index.html"
+      - "icon.svg"
+      - ".github/workflows/publish-release.yml"
   workflow_dispatch:
     inputs:
       version:
-        description: "Numeric version matching manifest.json"
-        required: true
+        description: "Numeric version matching manifest.json (blank uses manifest version)"
+        required: false
         type: string
         default: "1.0.1"
 
@@ -23,11 +31,13 @@ jobs:
         id: package
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
           MANIFEST_ID="$(node -p "require('./manifest.json').id")"
+          VERSION="${REQUESTED_VERSION:-$MANIFEST_VERSION}"
           if [[ "$MANIFEST_ID" != "trash-bin" ]]; then
             echo "Unexpected plugin id: $MANIFEST_ID" >&2
             exit 1
@@ -40,6 +50,14 @@ jobs:
             echo "Version must be numeric, for example 1.0.1" >&2
             exit 1
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "already_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$VERSION already exists; skipping publication."
+            echo "Release v$VERSION already exists; no asset was changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "already_exists=false" >> "$GITHUB_OUTPUT"
           mkdir -p dist
           zip -X -9 -j dist/plugin.zip manifest.json plugin.js index.html icon.svg
           unzip -t dist/plugin.zip
@@ -54,9 +72,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub release and upload plugin ZIP
+        if: steps.package.outputs.already_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
           gh release create "v${VERSION}" dist/plugin.zip \
             --title "Trash Bin v${VERSION}" \
