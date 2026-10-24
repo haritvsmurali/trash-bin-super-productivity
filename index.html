@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trash Bin</title>
+  <style>
+    body{padding:var(--s3)} .container{max-width:900px;margin:0 auto}
+    .subtle{color:var(--text-color-muted)} .notice{padding:var(--s2);border:1px solid var(--divider-color);border-radius:var(--card-border-radius);margin:var(--s2) 0 var(--s3)}
+    .toolbar,.actions{display:flex;gap:var(--s);flex-wrap:wrap;align-items:center;margin:var(--s2) 0}
+    .entry{border:1px solid var(--divider-color);border-radius:var(--card-border-radius);padding:var(--s2);margin:var(--s2) 0}
+    .entry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s2)} .entry-title{font-weight:600;overflow-wrap:anywhere}
+    .entry-meta{font-size:.9em;color:var(--text-color-muted);margin-top:var(--s-quarter)}
+    .empty{text-align:center;padding:var(--s4);color:var(--text-color-muted)} .pill{display:inline-block;border:1px solid var(--divider-color);border-radius:99px;padding:2px var(--s);font-size:.8em}
+    button:disabled{opacity:.5;cursor:not-allowed}.danger{border-color:var(--c-warn)}
+  </style>
+</head>
+<body>
+<main class="container">
+  <h1>Trash Bin</h1>
+  <p class="subtle">Review task deletions captured by the plugin. Archive records use synced plugin data.</p>
+  <div class="notice"><strong>Recovery scope</strong>
+    <p class="subtle">Only deletions for which a task snapshot was cached are restorable. Restoring creates a new task; the original ID, recurrence, timer history, and some relationships may not be preserved. Projects, tags, and saved filters are not fully recoverable through the public plugin API.</p>
+  </div>
+  <div class="toolbar">
+    <button id="refresh">Refresh</button><button id="clear" class="danger">Empty Trash…</button>
+    <label for="filter">Show:</label><select id="filter"><option value="all">All entries</option><option value="recoverable">Recoverable</option><option value="unavailable">Unavailable snapshots</option></select>
+    <span id="count" class="subtle"></span>
+  </div>
+  <div id="status" class="subtle" role="status" aria-live="polite"></div>
+  <section id="entries"><div class="empty">Loading Trash Bin…</div></section>
+</main>
+<script>
+  const TRASH_KEY = 'trash-v1';
+  let trash = [];
+  let busy = false;
+  function escapeHtml(value){const el=document.createElement('span');el.textContent=String(value==null?'':value);return el.innerHTML;}
+  function setStatus(message){document.getElementById('status').textContent=message||'';}
+  function dateLabel(value){const d=new Date(value);return Number.isNaN(d.getTime())?'Unknown date':d.toLocaleString();}
+  async function save(){await PluginAPI.persistDataSynced(JSON.stringify(trash),TRASH_KEY);}
+  async function load(){
+    if(busy)return;busy=true;setStatus('Loading…');
+    try{const raw=await PluginAPI.loadSyncedData(TRASH_KEY);const data=raw?JSON.parse(raw):[];trash=Array.isArray(data)?data:[];render();setStatus('');}
+    catch(e){console.error('[Trash Bin] Load failed',e);setStatus('Could not load Trash Bin data. Check the app console.');}
+    finally{busy=false;}
+  }
+  function render(){
+    const mode=document.getElementById('filter').value;
+    const visible=trash.filter(x=>mode==='all'||(mode==='recoverable'?!!x.snapshot:!x.snapshot));
+    document.getElementById('count').textContent=trash.length+' total entr'+(trash.length===1?'y':'ies');
+    const root=document.getElementById('entries');
+    if(!visible.length){root.innerHTML='<div class="empty">Trash Bin is empty for this filter.</div>';return;}
+    root.innerHTML=visible.map(item=>{
+      const title=item.snapshot&&item.snapshot.title?item.snapshot.title:'Deleted task ('+(item.taskId||'unknown ID')+')';
+      const project=item.snapshot&&item.snapshot.projectId?' · Project ID: '+item.snapshot.projectId:'';
+      const restore=item.snapshot?'<button data-action="restore" data-id="'+escapeHtml(item.entryId)+'">Restore as new task</button>':'<button disabled>Cannot restore</button>';
+      return '<article class="entry"><div class="entry-head"><div><div class="entry-title">'+escapeHtml(title)+'</div><div class="entry-meta">Deleted '+escapeHtml(dateLabel(item.deletedAt))+escapeHtml(project)+'</div></div><span class="pill">'+(item.snapshot?'Snapshot available':'Snapshot unavailable')+'</span></div>'+
+      (!item.snapshot?'<p class="subtle">The deletion was detected, but no task snapshot was available in the cache.</p>':'')+
+      '<div class="actions">'+restore+'<button data-action="remove" data-id="'+escapeHtml(item.entryId)+'">Permanently remove entry</button></div></article>';
+    }).join('');
+  }
+  async function restore(entryId){
+    const item=trash.find(x=>x.entryId===entryId);if(!item||!item.snapshot)return;
+    const task=item.snapshot;
+    const result=await PluginAPI.openDialog({title:'Restore task?',htmlContent:'<p>This creates a <strong>new task</strong> using saved fields. Original ID, timer history, recurrence settings and internal relationships may not be restored.</p><p><strong>'+escapeHtml(task.title||'Untitled task')+'</strong></p>',buttons:[{label:'Cancel'},{label:'Restore task',color:'primary',raised:true}]});
+    if(result!=='Restore task')return;
+    try{
+      const data={title:String(task.title||'Restored task'),notes:typeof task.notes==='string'?task.notes:'',timeEstimate:Number.isFinite(task.timeEstimate)?task.timeEstimate:0,isDone:!!task.isDone,dueDay:task.dueDay||null};
+      const projects=await PluginAPI.getAllProjects();if(task.projectId&&projects.some(p=>p.id===task.projectId))data.projectId=task.projectId;
+      const tags=await PluginAPI.getAllTags();if(Array.isArray(task.tagIds))data.tagIds=task.tagIds.filter(id=>tags.some(t=>t.id===id));
+      const newId=await PluginAPI.addTask(data);trash=trash.filter(x=>x.entryId!==entryId);await save();render();
+      PluginAPI.showSnack({msg:'Task restored as a new task'+(newId?' ('+newId+')':'' )+'.',type:'SUCCESS'});setStatus('Task restored. Review its project, tags, and relationships.');
+    }catch(e){console.error('[Trash Bin] Restore failed',e);PluginAPI.showSnack({msg:'Could not restore task. The archive entry was kept.',type:'ERROR'});setStatus('Restore failed; entry was retained.');}
+  }
+  async function removeEntry(entryId){
+    const item=trash.find(x=>x.entryId===entryId);if(!item)return;
+    const result=await PluginAPI.openDialog({title:'Permanently remove entry?',content:'Remove the Trash Bin record for “'+(item.snapshot?.title||item.taskId)+'”? This does not delete anything else from the app.',buttons:[{label:'Cancel'},{label:'Remove entry',color:'warn',raised:true}]});
+    if(result!=='Remove entry')return;trash=trash.filter(x=>x.entryId!==entryId);await save();render();setStatus('Trash Bin entry removed.');
+  }
+  async function clearAll(){
+    if(!trash.length)return;
+    const result=await PluginAPI.openDialog({title:'Empty Trash Bin?',content:'Permanently remove all '+trash.length+' Trash Bin record(s)? This removes only this plugin archive.',buttons:[{label:'Cancel'},{label:'Empty Trash',color:'warn',raised:true}]});
+    if(result!=='Empty Trash')return;trash=[];await save();render();PluginAPI.showSnack({msg:'Trash Bin emptied.',type:'SUCCESS'});
+  }
+  document.getElementById('entries').addEventListener('click',async e=>{
+    const btn=e.target.closest('button[data-action]');if(!btn)return;btn.disabled=true;
+    try{if(btn.dataset.action==='restore')await restore(btn.dataset.id);else if(btn.dataset.action==='remove')await removeEntry(btn.dataset.id);}
+    catch(err){console.error('[Trash Bin] Action failed',err);setStatus('Action failed.');}
+    finally{btn.disabled=false;}
+  });
+  document.getElementById('refresh').addEventListener('click',load);
+  document.getElementById('filter').addEventListener('change',render);
+  document.getElementById('clear').addEventListener('click',clearAll);
+  load();
+</script>
+</body>
+</html>
