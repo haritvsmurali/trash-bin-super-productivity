@@ -17,9 +17,9 @@ This version does not provide full recovery for projects, tags, saved filters, r
 
 ## Install
 
-1. Download `plugin.zip` from the Releases page (or use the local ZIP while testing).
-2. In Super Productivity, open **Settings → Plugins → Choose Plugin File** and select the ZIP.
-3. Enable the plugin and open its manifest-provided plugin/side-panel entry.
+1. In the repository, open **Actions → Publish plugin release → Run workflow** and run version `1.0.1`. This creates the `v1.0.1` release with `plugin.zip` attached and prints its SHA-256 in the workflow summary.
+2. Download `plugin.zip` from the [Releases page](https://github.com/haritvsmurali/trash-bin-super-productivity/releases).
+3. In Super Productivity, open **Settings → Plugins → Choose Plugin File** and select the ZIP, then enable it and open its manifest-provided plugin/side-panel entry.
 
 ## Build the install ZIP
 
